@@ -1,11 +1,8 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:dartz/dartz.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
-import 'package:oauth2/oauth2.dart';
 import 'package:http/http.dart' as http;
+import 'package:oauth2/oauth2.dart';
 import 'package:repo_viewer/auth/domain/auth_failure.dart';
 import 'package:repo_viewer/core/infrastructure/dio_extensions.dart';
 import 'package:repo_viewer/core/shared/encoders.dart';
@@ -44,13 +41,15 @@ class GithubAuthenticator {
       final storedCredentials = await _credentialsStorage.read();
       if (storedCredentials != null) {
         if (storedCredentials.canRefresh && storedCredentials.isExpired) {
-          // TODO: refresh
+          final failureOrCredentials = await refresh(storedCredentials);
+          return failureOrCredentials.fold((l) => null, (r) => r);
         }
         return storedCredentials;
       }
     } on PlatformException {
       return null;
     }
+    return null;
   }
 
   Future<bool> isSignedIn() =>
@@ -119,12 +118,20 @@ class GithubAuthenticator {
   Future<Either<AuthFailure, Credentials>> refresh(
     Credentials credentials,
   ) async {
-    final refreshedCredentials = await credentials.refresh(
-      identifier: clientId,
-      secret: clientSecret,
-      httpClient: GithubOAuthHttpClient(),
-    );
-    await _credentialsStorage.save(refreshedCredentials);
-    return right(refreshedCredentials);
+    try {
+      final refreshedCredentials = await credentials.refresh(
+        identifier: clientId,
+        secret: clientSecret,
+        httpClient: GithubOAuthHttpClient(),
+      );
+      await _credentialsStorage.save(refreshedCredentials);
+      return right(refreshedCredentials);
+    } on FormatException {
+      return left(const AuthFailure.server());
+    } on AuthorizationException catch (e) {
+      return left(AuthFailure.server('${e.error}: ${e.description}'));
+    } on PlatformException {
+      return left(const AuthFailure.storage());
+    }
   }
 }
